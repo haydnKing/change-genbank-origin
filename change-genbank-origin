@@ -2,8 +2,9 @@
 
 import argparse, sys, os.path
 from Bio import SeqIO, Alphabet
+from Bio.SeqFeature import *
 
-def is_valid_sequence(parser, arg):
+def open_sequence(arg):
 	try:
 		return SeqIO.read(arg, 'genbank', Alphabet.generic_dna)
 	except ValueError as e:
@@ -12,11 +13,45 @@ def is_valid_sequence(parser, arg):
 
 def get_default_output(input_file, origin):
 	(root, ext) = os.path.splitext(input_file)
-	return "{}_{}{}".format(root, origin, ext)
+	return "{}_{}{}".format(root, origin+1, ext)
 	
 
-def change_feature_location(f, origin):
+def change_feature_location(f, origin, record):
+	
+	L = len(record.seq)
 
+	parts = [p + (L-origin) for p in f.location.parts]
+
+	parts = [ (FeatureLocation(p.start-L,p.end-L,strand=p.strand) 
+						 if p.start > L else p) for p in parts]
+	
+	if len(parts) > 1:
+		#see if any join
+		_parts = []
+		last = None
+		for part in parts:
+			if last:
+				#if the part will join with the last one
+				if last.end == part.start and last.strand == part.strand:
+					last = FeatureLocation(last.start, part.end, strand=part.strand)
+					continue
+				else:
+					_parts.append(last)
+			last = part
+		_parts.append(last)
+
+
+		parts = _parts
+
+	#split parts which are past the end
+	parts = [(CompoundLocation([FeatureLocation(p.start,L,strand=p.strand),
+														 FeatureLocation(0,p.end-L,strand=p.strand)]) 
+						if p.end > L else p) for p in parts]
+
+	if len(parts) == 1:
+		f.location = parts[0]
+	else:
+		f.location = CompoundLocation(parts)
 
 	return f
 
@@ -49,8 +84,10 @@ def main():
 	record.seq = record.seq[origin:] + record.seq[:origin]
 
 	#move features
-	record.features = [change_feature_location(f, origin) for f in record.features]
+	record.features = [change_feature_location(f, origin, record) 
+										 for f in record.features]
 
+	SeqIO.write(record, output, 'genbank')
 
 
 if __name__=='__main__':
